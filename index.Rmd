@@ -1,0 +1,374 @@
+---
+title: "Rob is the best: A more stable method of comparing fantasy football teams using Monte Carlo simulation of schedules in R"
+author: "By Rich Abdill"
+date: "11/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+set.seed(714111)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE) # so we don't have to run the simulation every time
+```
+
+*This blog post was built using Rmarkdown; all source code and data is available [on GitHub](https://github.com/rabdill/robsim). If you want to know more about me, go back to [my personal homepage](https://richabdill.com).*
+
+---
+
+So I have a friend—let's call him Rob, since that's his name. Rob is serious about fantasy football, and he's been stewing about last season's results. He messaged me the other day:
+
+>hey rich explain this shit if youre so smart
+
+(I had not claimed to be so smart, but this is always a fun way to start a conversation.)
+
+>last year in fantasy football my team scored 1393 cumulative points against an average of 1136  
+i was 2.5 standard deviations above average which makes it the best output in 212 player seasons of fantasy football  
+but i went 6-7 and missed the playoffs
+
+After a great many follow-up questions, Rob's objection boiled down to this:
+
+>like if i was the greatest team of all time and 50% of teams make the playoffs every year than statistically i should have made the playoffs
+
+If you're not familiar with fantasy football, it's a game that lines up with the NFL season in which a group of friends/enemies/strangers (in this case, 12) each draft a "fantasy team" of currently active NFL players. Each week, your team goes head-to-head against one of the other teams. You score is determined by the performance of the players on your team during the actual NFL season: If your quarterback plays that Sunday afternoon and throws for 280 yards and four touchdowns, you may get something like get 6 points per touchdown, plus 1 point for every 30 yards of passing, so your quarterback in that week would have earned your team a total of 33 points. Similar calculations are done for your running backs, wide receivers, and so on. At the end of the week, your team gets a "win" if your team scored more fantasy points than your opponent's fantasy team. In the fantasy league in question, they played a 13-week regular season schedule: For the first 11 weeks, every team plays every other team exactly once. In the last two weeks, the match-ups start over, and the schedule from weeks 1 and 2 repeats.
+
+The reason fantasy football is a practical simulation exercise is that the fantasy teams aren't really playing *against* each other---they're both "playing," but there's no way for one fantasy team to (directly) influence the performance of the other. If Rob's team scores 85 points in week 1, they scored 85 points completely independently of how many points Rob's week 1 "opponent" scored. There *could* be a very minor bit of strategy in choosing your starting lineup based on your opponent's team---how should you handle it if you have a good quarterback but your opponent has that quarterback's best wide receiver, for example---but overall, the match-ups don't directly influence each other.
+
+So now we look at Rob's first statement: Based on his total points at the end of the season, "i was the greatest team of all time." The contention here is basically that his record didn't reflect how good his team actually was. This is interesting (and convenient) because he's not challenging the notion that *points* are a good measurement of a team's ability---the problem is the weekly match-ups.
+
+We could use total points over the course of the season to measure ability, similarly to how it's done in ["rotisserie" fantasy baseball](https://www.fantraxhq.com/fantasy-101-how-to-play-rotisserie-baseball/), but that doesn't seem exactly right either: For example, if Team A scores 90 points every single week, and Team B scores 95 points every week, it would be easy to say Team B performed better over the course of a season. But if Team A has one week in which they score 150 points rather than 90, their total season points passes that of Team B. Saying Team A had a better season in this case doesn't seem accurate---they had a better *week*, for sure, but did Team B still have a better season?
+
+So it seems like what we're after is related to consistency---week over week, which team is good *more often*. There are endless ways we could try to evaluate this---removing outliers, figuring out weekly ranks for each team, and so on. However, **assuming fantasy points are an accurate reflection of how good a team is**, the most straightforward and most easily interpreted way to evaluate a team's success is to just try out a lot of schedules and see what happens. We can bypass questions about player performance and unbalanced scoring rubrics and get at a simpler but compelling question: whether *the schedule itself* was the cause of Rob's woes. If his team is as good as his season total suggests, what are the odds of the match-ups only giving him 6 wins in a season? If his team is doing well every week, it seems very improbable that a bunch of inferior teams would each have their *one good week* in the week they happen to play against Rob---but how improbable?
+
+First, we start with a matrix of all the weekly score totals. Each column is a team, and each row is a week. (It would have been tidier to make each column a week, but I was too far along to go back and fix this later.)
+
+```{r load_data}
+data <- read.csv('./scores.csv')
+data
+```
+
+Since we know the rules for how schedules are determined, we can generate a random schedule for Rob:
+```{r make_robschedule}
+schedule <- sample(colnames(data[, names(data) != 'rob']))
+schedule <- append(schedule, schedule[1:2])
+schedule
+```
+
+Now we know every team's score in every week, plus who Rob's hypothetical opponent is in each week for this randomly generated schedule. Now we just have to see what the results are:
+```{r calc_robwins}
+wins <- 0
+losses <- 0
+ties <- 0
+week <- 0
+for(team in schedule) {
+  week <- week + 1
+  if(data[week, 'rob'] > data[week, team]) {
+    wins <- wins +1
+  } else if(data[week, 'rob'] < data[week, team]) {
+    losses <- losses + 1 
+  } else {
+    ties <- ties + 1
+  }
+}
+print(paste(wins, losses, ties, sep='-')) 
+```
+
+So at the end of this fictional season, Rob wins an amazing 11 out of 13 games, *without anything actually changing about his team*. This shows that it's *possible* for the team to do better than 6-7, but we're still just looking at one randomly selected season, and we know there are millions. We could just run this simulation a bunch more times, but unfortunately, there was more to Rob's objection than just his record: His main issue was that **he didn't make the playoffs**, which is based not only on *his* record, but everyone else's, too. If the six teams with the best records make the playoffs in a 12-team league, then in some seasons, going 6-7 might actually make the cut.
+
+Now we get to the challenging part. Generating a schedule for Rob's team only required a single line of code. But to figure out the playoffs, we need to generate random schedules *for the league*. It might not be impossible to model every single possibility, but it's close enough to impossible on a laptop that so we're going to attack this using the [Monte Carlo method](https://en.wikipedia.org/wiki/Monte_Carlo_method) instead: Testing thousands of possible schedules isn't exhaustive, but it will give us more than enough accuracy for what we're asking.
+
+First is a script to generate a 12-team schedule:
+```{r build_oneschedule}
+makeschedule <- function(data, weeks) {
+  schedule <- matrix(nrow=12, ncol=weeks)
+  for(week in 1:weeks) {
+    done <- FALSE
+    attempts <- 0
+    while(!done) {
+      done <- TRUE
+      attempts <- attempts + 1
+      for(team in 1:12) {
+        if(!is.na(schedule[team,week])) {
+          next # skip if they already have a match-up
+        }
+        # start with all teams
+        options <- 1:12
+        # don't match up a team against itself
+        options <- options[options != team]
+        # don't match up a team against a team it's already played
+        if(week > 1) {
+          options <- options[!options %in% schedule[team,1:week-1]]
+        }
+        # don't match up a team against one that's already playing that week
+        options <- options[!options %in% schedule[,week]]
+        
+        # Check if we're out of options
+        if(length(options) == 0) {
+          if(attempts > 30) {
+            # If we try to resolve a week's schedule but fail 30 times
+            # in a row, just throw away the whole schedule and try again
+            return(FALSE)
+          }
+          # If we haven't tried 30 times, but we're still out of options,
+          # throw out this week and try again
+          schedule[,week] <- NA
+          done <- FALSE
+          break
+        } else if(length(options) ==  1) {
+          # this is here because sample(list, 1)
+          # does NOT work like you think when $list is of
+          # length 1.
+          opponent <- options[1]
+        } else {
+          # if we still have options for an opponent, pick one
+          opponent <- sample(options,1)
+        }
+        schedule[team,week] <- opponent
+        schedule[opponent,week] <- team # add entry for opponent also
+      }
+    }
+  }
+  return(schedule)
+}
+
+schedule <- FALSE
+# make the 11-game unique schedule
+while(length(schedule)==1) {
+  # the makeschedule() function will return FALSE
+  # if it got stuck in a scheduling loop that couldn't
+  # be resolved. so then we try again.
+  schedule <- makeschedule(data, 11)
+}
+# Once we have the 11-week schedule, repeat the first 2 weeks
+schedule <- cbind(schedule, schedule[,1:2])
+schedule
+```
+
+In the above matrix, each column is a week, and each row is a team. Each cell indicates the opponent for a single team in a single week. Now that we have the weekly match-ups, and we already know the weekly scores, we can figure out what everyone's records would be if the league had been randomly assigned this schedule instead.
+```{r calc_allrecords_once}
+# figure out team records
+winmatrix <- matrix(nrow=12, ncol=13)
+lossmatrix <- matrix(nrow=12, ncol=13)
+for(week in 1:13) {
+  for(team in 1:12) {
+    opponent <- schedule[team,week]
+    if(data[week, team] > data[week, opponent]) {
+      winmatrix[team,week] <- 1
+      lossmatrix[opponent,week] <- 1
+    } else if(data[week, team] < data[week, opponent]) {
+      winmatrix[opponent,week] <- 1
+      lossmatrix[team,week] <- 1
+    }
+  }
+}
+# tally up the records
+rankings <- data.frame(
+  team = integer(),
+  wins=integer(),
+  losses=integer(),
+  ties=integer()
+)
+for(team in 1:12) {
+  wins = sum(na.omit(winmatrix[team,]))
+  losses = sum(na.omit(lossmatrix[team,]))
+  ties = 13 - wins - losses
+  rankings[team,] <- c(team, wins, losses, ties)
+}
+```
+
+This gives us a data frame for this random schedule listing the record of all the teams in the league. We can then add some logic to tell us which teams would have made it to the playoffs.
+```{r display_records, message=FALSE, error=FALSE}
+library(dplyr)
+# The runif() call here is a cheat: After teams are ranked by wins
+# and losses, it sorts any ties by using random numbers. This is a
+# hacky way to deal with situations where multiple teams are tied
+# for the cutoff to make the playoffs. We just give it to random teams.
+rankings <- rankings %>% arrange(desc(wins), losses, runif(1))
+rankings$playoffs <- c(rep(TRUE,6), rep(FALSE,6))
+# add names to the team column
+rankings$team <- colnames(data)[rankings$team]
+
+print.data.frame(rankings)
+```
+
+So in our single simulated schedule, we see that not only did Rob's team have the best record in the league (9-4), but that his team also made the playoffs. To figure out the probability of this happening in the long run, we can use this code inside a loop to simulate many possible seasons. (This is an embarrassingly parallel problem, so you can [speed it up dramatically](https://www.jottr.org/2019/01/11/parallelize-a-for-loop-by-rewriting-it-as-an-lapply-call/) for your own uses if you want to.)
+```{r ITERATE_SCHEDULE}
+alltime <- data.frame(
+  team = integer(),
+  wins=integer(),
+  losses=integer(),
+  ties=integer(),
+  iteration=integer()
+)
+
+seasons <- 25000 # how many sims to do
+for(iteration in 1:seasons) {
+  if(iteration %% 5000 == 0) {
+    print(paste('iteration',iteration))
+  }
+  
+  schedule <- FALSE
+  # make the 11-game unique schedule
+  while(length(schedule)==1) {
+    # the makeschedule() function will return FALSE
+    # if it got stuck in a scheduling loop that couldn't
+    # be resolved. so then we try again.
+    schedule <- makeschedule(data, 11)
+  }
+  # you play the first two weeks again at the end of the season
+  schedule <- cbind(schedule, schedule[,1:2])
+  
+  # figure out team records
+  winmatrix <- matrix(nrow=12, ncol=13)
+  lossmatrix <- matrix(nrow=12, ncol=13)
+  for(week in 1:13) {
+    for(team in 1:12) {
+      opponent <- schedule[team,week]
+      if(data[week, team] > data[week, opponent]) {
+        winmatrix[team,week] <- 1
+        lossmatrix[opponent,week] <- 1
+      } else if(data[week, team] < data[week, opponent]) {
+        winmatrix[opponent,week] <- 1
+        lossmatrix[team,week] <- 1
+      }
+    }
+  }
+  # tally up the records
+  rankings <- data.frame(
+    team = integer(),
+    wins=integer(),
+    losses=integer(),
+    ties=integer(),
+    iteration=integer()
+  )
+  for(team in 1:12) {
+    wins = sum(na.omit(winmatrix[team,]))
+    losses = sum(na.omit(lossmatrix[team,]))
+    ties = 13 - wins - losses
+    rankings[team,] <- c(team, wins, losses, ties,iteration)
+  }
+
+  rankings <- rankings %>% arrange(desc(wins), desc(losses), runif(1))
+  rankings$playoffs <- c(rep(TRUE,6), rep(FALSE,6))
+  if(iteration > 1) {
+    alltime <- rbind(alltime,rankings)
+  } else {
+    alltime <- rankings # so we don't blow up the column titles
+  }
+}
+```
+
+Now we have a data frame called `alltime` with the league results for 25,000 seasons. We can make the same histogram of Rob's wins:
+```{r plot_robwins_all}
+library(ggplot2)
+rob <- alltime[alltime$team==4,]
+ggplot(rob, aes(x=wins)) +
+  geom_histogram(binwidth=1, fill='#6baed6', color='black') +
+  scale_x_continuous(breaks=c(0:20)) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+```
+
+So we can see that most of the time, Rob's team actually wins 9 games, and in 0.064 percent of the simulations, his team---which, again, went 6-7 in real life---**actually goes undefeated**. (In 0.036 percent of seasons, the team wins only 4 out of 13 games, which would have been much funnier.) Now that we have the distribution of wins, we can use it to estimate just how unusual it was for the team to only win 6 games.
+```{r rob_winquant}
+nrow(rob[rob$wins <= 6,])/nrow(rob)
+nrow(rob[rob$losses >= 7,])/nrow(rob)
+```
+
+The first number is essentially the area under the left tail of the win distribution---in our simulations, Rob's team achieves 6 or fewer wins only *3.2 percent of the time*, which means **it was very unusual that his team did not win more games**. If we look at losses, the probability is even lower: His team only recorded 7 or more losses in 2.7 percent of simulations. This discrepancy is even more pronounced when we compare it to the distribution of the records of everyone else:
+
+```{r dist_compare}
+library(scales)
+
+facetlabel <- function(labels) {
+  return(data.frame(label=c('Rob','everyone else')))
+}
+ggplot(alltime, aes(x=wins, y = stat(density))) +
+  geom_histogram(binwidth=1, fill='#6baed6',color='black') +
+  scale_x_continuous(breaks=c(0:20)) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(
+    rows=alltime$team!=4,
+    labeller = facetlabel
+  )
+```
+
+The top panel is the same histogram of Rob's wins, and the bottom panel is the histogram for everyone else. Clearly, the median wins per season for Rob's team is much higher---in fact, in 25,000 seasons, Rob's was the **only** team to have an undefeated season. However, lumping everyone together in the bottom panel could obscure the presence of teams that are better than average, which is relevant here. This is what it looks like when we split out everyone separately:
+```{r plot_curves}
+labeled <- alltime
+labeled$team <- colnames(data)[labeled$team]
+
+library(RColorBrewer)
+getPalette = colorRampPalette(brewer.pal(11, "Spectral"))
+
+ggplot(labeled, aes(x=wins, fill=team)) +
+  geom_density(adjust=5, alpha=0.8) +
+  theme_bw() +
+  scale_fill_manual(values=getPalette(13))
+```
+
+It's pretty tangled up in the middle, but we can see Rob's distribution (blue) is still out ahead of everyone else, followed by Nick's team (the darkest blue-green), which actually came in second in the real-life standings as well. It drops off quickly after that. Now that we have the records for every team in every season, we can also address Rob's primary grievance: that he didn't make the playoffs.
+```{r rob_playoffrate}
+nrow(rob[rob$playoffs,]) / nrow(rob)
+
+nrow(rob[rob$playoffs,][rob$wins<=6,][rob$losses>=7,]) / nrow(rob)
+```
+
+So, given everyone's existing weekly scores and a totally random schedule, there's **a 96.8 percent chance Rob's team makes the playoffs**, including 2.7 percent of scenarios in which Rob's record doesn't actually improve, but *he makes it to the playoffs anyway*. We can re-draw the histogram of Rob's team's wins to look at this:
+```{r plot_rob_playoffwins}
+ggplot(rob, aes(x=wins)) +
+  geom_histogram(binwidth=1, fill='#6baed6', color='black') +
+  scale_x_continuous(breaks=c(0:20)) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  facet_grid(rows=vars(playoffs))
+```
+
+This makes two different plots: The top one is all the times Rob failed to make the playoffs, the bottom is all the seasons in which he did make it. We can see that most times, 6 wins isn't enough to make the cut, but sometimes it is. 5 is never enough. Hilariously, there is one simulated season in which the team goes 8-4-1 and still doesn't make it.
+
+If we build the same histogram, but for everyone combined, we see a similar pattern emerge in general:
+```{r plot_all_playoffwins}
+ggplot(alltime, aes(x=wins)) +
+  geom_histogram(binwidth=1, fill='#6baed6', color='black') +
+  scale_x_continuous(breaks=c(0:20)) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  facet_grid(rows=vars(playoffs))
+```
+
+Again, 6 usually isn't enough wins and 7 usually is. In 7 simulations (0.028 percent), a team got 8 wins and didn't make the cut. So this gets at Rob's second question: In addition to 6 wins being an unusually low number, **it was also very unusual he didn't make the playoffs**. (Though, in scenarios where his team *does* get 6 wins, not making the playoffs is the most likely outcome.)
+
+But we can go one step farther now, too: Since we have all these simulations, we can compare all the teams at the same time. Yes, it was very likely that Rob's team would make the playoffs, but what about compared to all the other teams?
+```{r count_allwins}
+comparison <- data.frame(
+  team=integer(),
+  wins=integer(),
+  playoffs=integer()
+)
+for(team in 1:12) {
+  total_wins <- sum(alltime[alltime$team==team,]$wins)
+  playoffs <- sum(alltime[alltime$team==team,]$playoffs)
+  comparison[team,] <- c(team, total_wins, playoffs)
+}
+comparison$wins <- comparison$wins/seasons
+comparison$playoffs <- comparison$playoffs/seasons
+# add names to the team column
+comparison$team <- colnames(data)[comparison$team]
+print.data.frame(comparison %>% arrange(desc(playoffs)))
+```
+
+This, combined with the distribution of wins for each team, is why we have convincing evidence that Rob's team was the best, despite a below-average showing in the real-life season. Across all simulated seasons, his team averages more than 8.9 wins per season, ahead of Nick's team and far ahead of everyone else. His team also far more likely to make the playoffs. On the other end of the list, Jacob and Matt's teams average far fewer wins than everyone else, and Adam's team---which went on to win the league championship (and the cash)---doesn't even make the playoffs in more than 66 percent of the time.
+
+To sum up:
+
+* Rob's team went 6-7 in real life. It's surprising that his team did not get more wins, and slightly *more* surprising that his team did not get fewer losses. Given his players' performance, there was only a 3.2 percent chance that his team's schedule resulted in getting 6 or fewer wins.
+* Rob's team did not make the playoffs, but in 96.8 percent of league schedules, they would have.
+
+In conclusion, two things are clear. Number one, we have evidence that, without changing anything about the league/scoring/players, **Rob's team had by far the best regular-season performance in last year's fantasy season**. Which leads us to number two: The head-to-head results from a single weekly schedule are a practically useless method of evaluating the relative strength of fantasy teams. In a 13-week season (with 2 repeated match-ups), the number of permutations for a single team's weekly schedule is 39,916,800. Rob's team---or *any* team---going 6-7 is the result of one arbitrary schedule out of *40 million*. Leagues could use post-hoc analysis of simulated seasons to provide a more interpretable, more consistent and far less arbitrary evaluation of which teams were the best. It just wouldn't be any fun.
+
+---
+
+*Special thanks to John, who smuggled these scores out of the ESPN app for me even though he only makes it to the playoffs 50 percent of the time.*
+
+[richabdill.com](https://richabdill.com)
