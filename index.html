@@ -3,6 +3,15 @@
 <html>
 
 <head>
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-48519225-2"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-48519225-2');
+</script>
 
 <meta charset="utf-8" />
 <meta name="generator" content="pandoc" />
@@ -412,8 +421,8 @@ data</code></pre>
 <pre class="r"><code>schedule &lt;- sample(colnames(data[, names(data) != &#39;rob&#39;]))
 schedule &lt;- append(schedule, schedule[1:2])
 schedule</code></pre>
-<pre><code>##  [1] &quot;adam&quot;     &quot;mark&quot;     &quot;john&quot;     &quot;kyle&quot;     &quot;brian&quot;    &quot;larson&quot;  
-##  [7] &quot;nick&quot;     &quot;greg&quot;     &quot;matt&quot;     &quot;lockwood&quot; &quot;jacob&quot;    &quot;adam&quot;    
+<pre><code>##  [1] &quot;adam&quot;     &quot;mark&quot;     &quot;john&quot;     &quot;kyle&quot;     &quot;brian&quot;    &quot;larson&quot;
+##  [7] &quot;nick&quot;     &quot;greg&quot;     &quot;matt&quot;     &quot;lockwood&quot; &quot;jacob&quot;    &quot;adam&quot;
 ## [13] &quot;mark&quot;</code></pre>
 <p>Now we know every team’s score in every week, plus who Rob’s hypothetical opponent is in each week for this randomly generated schedule. Now we just have to see what the results are:</p>
 <pre class="r"><code>wins &lt;- 0
@@ -425,7 +434,7 @@ for(team in schedule) {
   if(data[week, &#39;rob&#39;] &gt; data[week, team]) {
     wins &lt;- wins +1
   } else if(data[week, &#39;rob&#39;] &lt; data[week, team]) {
-    losses &lt;- losses + 1 
+    losses &lt;- losses + 1
   } else {
     ties &lt;- ties + 1
   }
@@ -457,7 +466,7 @@ print(paste(wins, losses, ties, sep=&#39;-&#39;)) </code></pre>
         }
         # don&#39;t match up a team against one that&#39;s already playing that week
         options &lt;- options[!options %in% schedule[,week]]
-        
+
         # Check if we&#39;re out of options
         if(length(options) == 0) {
           if(attempts &gt; 30) {
@@ -579,7 +588,7 @@ for(iteration in 1:seasons) {
   if(iteration %% 5000 == 0) {
     print(paste(&#39;iteration&#39;,iteration))
   }
-  
+
   schedule &lt;- FALSE
   # make the 11-game unique schedule
   while(length(schedule)==1) {
@@ -590,7 +599,7 @@ for(iteration in 1:seasons) {
   }
   # you play the first two weeks again at the end of the season
   schedule &lt;- cbind(schedule, schedule[,1:2])
-  
+
   # figure out team records
   winmatrix &lt;- matrix(nrow=12, ncol=13)
   lossmatrix &lt;- matrix(nrow=12, ncol=13)
